@@ -1,5 +1,7 @@
 ## aws-signing-proxy
-FROM scratch
+
+### Use alpine instead of scratch so that we can use /bin/sh
+FROM alpine
 MAINTAINER Chris Lunsford <cllunsford@gmail.com>
 
 # Add ca-certificates.crt for https
