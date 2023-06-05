@@ -15,10 +15,9 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/client/metadata"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/defaults"
 	"github.com/aws/aws-sdk-go/aws/request"
-	"github.com/aws/aws-sdk-go/aws/signer/v4"
+	"github.com/aws/aws-sdk-go/aws/session"
+	v4 "github.com/aws/aws-sdk-go/aws/signer/v4"
 	"github.com/kelseyhightower/envconfig"
 )
 
@@ -36,7 +35,7 @@ type AppConfig struct {
 }
 
 // NewSigningProxy proxies requests to AWS services which require URL signing using the provided credentials
-func NewSigningProxy(target *url.URL, creds *credentials.Credentials, region string, appConfig AppConfig) *httputil.ReverseProxy {
+func NewSigningProxy(target *url.URL, region string, appConfig AppConfig) *httputil.ReverseProxy {
 	director := func(req *http.Request) {
 		// Rewrite request to desired server host
 		req.URL.Scheme = target.Scheme
@@ -47,7 +46,11 @@ func NewSigningProxy(target *url.URL, creds *credentials.Credentials, region str
 		// aws.request performs more functions than we need here
 		// we only populate enough of the fields to successfully
 		// sign the request
-		config := aws.NewConfig().WithCredentials(creds).WithRegion(region)
+		sess := session.Must(session.NewSessionWithOptions(session.Options{
+			Config: aws.Config{
+				Region: &region,
+			},
+		}))
 
 		clientInfo := metadata.ClientInfo{
 			ServiceName: appConfig.Service,
@@ -64,7 +67,7 @@ func NewSigningProxy(target *url.URL, creds *credentials.Credentials, region str
 
 		// Do we need to use request.New ? Or can we create a raw Request struct and
 		//  jus swap out the HTTPRequest with our own existing one?
-		awsReq := request.New(*config, clientInfo, handlers, nil, operation, nil, nil)
+		awsReq := request.New(*sess.Config, clientInfo, handlers, nil, operation, nil, nil)
 		// Referenced during the execution of awsReq.Sign():
 		//  req.Config.Credentials
 		//  req.Config.LogLevel.Value()
@@ -167,16 +170,6 @@ func main() {
 		log.Fatal(err.Error())
 	}
 
-	// Get credentials:
-	// Environment variables > local aws config file > remote role provider
-	// https://github.com/aws/aws-sdk-go/blob/master/aws/defaults/defaults.go#L88
-	creds := defaults.CredChain(defaults.Config(), defaults.Handlers())
-	if _, err = creds.Get(); err != nil {
-		// We couldn't get any credentials
-		fmt.Println(err)
-		return
-	}
-
 	// Region order of precident:
 	// regionFlag > os.Getenv("AWS_REGION") > "us-west-2"
 	region := *regionFlag
@@ -185,7 +178,7 @@ func main() {
 	}
 
 	// Start the proxy server
-	proxy := NewSigningProxy(targetURL, creds, region, appC)
+	proxy := NewSigningProxy(targetURL, region, appC)
 	listenString := fmt.Sprintf(":%v", *portFlag)
 	fmt.Printf("Listening on %v\n", listenString)
 	http.ListenAndServe(listenString, proxy)
